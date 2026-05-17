@@ -10,9 +10,14 @@
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_system.h"
+#include "esp_rom_sys.h"
+#include "esp_task_wdt.h"
 
 #include "driver/gpio.h"
 #include "soc/gpio_struct.h"
+
+#define DISPLAY_CORE 1
+#define ROW_HOLD_US 100
 
 // serial and clock pins for cathodes (columns)
 static const int SER_CAT = 25;
@@ -33,14 +38,22 @@ int image[8] = {
   0b01111110,
 };
 
+static inline void digital_write(int pin, int value) {
+  if (value) {
+    GPIO.out_w1ts = 1UL << pin;
+  } else {
+    GPIO.out_w1tc = 1UL << pin;
+  }
+}
+
 void pulse_row() {
-  GPIO.out_w1tc = 1UL << (CLK_AN);   // clear CLK_CAT
-  GPIO.out_w1ts = 1UL << (CLK_AN);   // set CLK_CAT
+  digital_write(CLK_AN, 0);
+  digital_write(CLK_AN, 1);
 }
 
 void pulse_col() {
-  GPIO.out_w1tc = 1UL << (CLK_CAT);   // clear CLK_CAT
-  GPIO.out_w1ts = 1UL << (CLK_CAT);   // set CLK_CAT
+  digital_write(CLK_CAT, 0);
+  digital_write(CLK_CAT, 1);
 }
 
 void display_image(int arr[8]) {
@@ -48,15 +61,16 @@ void display_image(int arr[8]) {
   for (int row = 0; row < 8; row++) {
     // Shift in the column
     for (int col = 0; col < 8; col++) {
-      gpio_set_level(SER_CAT, arr[row] & (1 << col) ? 1 : 0);
+      digital_write(SER_CAT, (arr[row] & (1 << col)));
       pulse_col();
     }
     pulse_col();
 
-    gpio_set_level(SER_AN, row == 7 ? 0 : 1);
+    // Loop over active row
+    digital_write(SER_AN, (row == 7) ? 0 : 1);
     pulse_row();
 
-    vTaskDelay(1);
+    esp_rom_delay_us(ROW_HOLD_US);
   }
 }
 
@@ -65,17 +79,29 @@ void configure_pin(int pin) {
   gpio_set_direction(pin, GPIO_MODE_OUTPUT);
 }
 
-void app_main(void) {
-  printf("Hello world!\n");
+void display_task() {
+  // Remove watchdog
+  esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(DISPLAY_CORE));
 
+  while (true) {
+    display_image(image);
+  }
+}
+
+void app_main(void) {
   // Reset the pins
   configure_pin(SER_CAT);
   configure_pin(CLK_CAT);
   configure_pin(SER_AN);
   configure_pin(CLK_AN);
 
-  // Draw images forever!
-  while (true) {
-    display_image(image);
-  }
+  xTaskCreatePinnedToCore(
+      display_task,
+      "display",
+      4096,
+      NULL,
+      configMAX_PRIORITIES - 1, // priority
+      NULL,
+      1
+  );
 }
