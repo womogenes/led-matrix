@@ -83,9 +83,7 @@ void display_task() {
   // Remove watchdog
   esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(DISPLAY_CORE));
 
-  while (true) {
-    display_image(image);
-  }
+  while (true) display_image(image);
 }
 
 void app_main(void) {
@@ -95,13 +93,14 @@ void app_main(void) {
   configure_pin(SER_AN);
   configure_pin(CLK_AN);
 
+  // Display task on dedicated core 1
   xTaskCreatePinnedToCore(
       display_task,
       "display",
-      4096,
+      4096,                     // bytes allocated to task size
       NULL,
       configMAX_PRIORITIES - 1, // priority
       NULL,
-      1
+      DISPLAY_CORE              // core ID
   );
 }
