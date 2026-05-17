@@ -23,3 +23,11 @@ To show that I can make a half-polished LED matrix from scratch using:
 - Increase bitdepth
 - Add video streaming
 - Add arcade games
+
+## Notes
+
+```sh
+idf.py -b 921600 app-flash monitor
+```
+
+to flash just the app at 921k baud.
