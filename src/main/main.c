@@ -12,14 +12,15 @@
 #include "esp_system.h"
 
 #include "driver/gpio.h"
+#include "soc/gpio_struct.h"
 
 // serial and clock pins for cathodes (columns)
-const int SER_CAT = 25;
-const int CLK_CAT = 26;
+static const int SER_CAT = 25;
+static const int CLK_CAT = 26;
 
 // serial and clock pins for anodes (rows)
-const int SER_AN = 27;
-const int CLK_AN = 14;
+static const int SER_AN = 27;
+static const int CLK_AN = 14;
 
 int image[8] = {
   0b00000000,
@@ -32,30 +33,30 @@ int image[8] = {
   0b01111110,
 };
 
-void pulseRow() {
-  gpio_set_level(CLK_AN, 0);
-  gpio_set_level(CLK_AN, 1);
+void pulse_row() {
+  GPIO.out_w1tc = 1UL << (CLK_AN);   // clear CLK_CAT
+  GPIO.out_w1ts = 1UL << (CLK_AN);   // set CLK_CAT
 }
 
-void pulseCol() {
-  gpio_set_level(CLK_CAT, 0);
-  gpio_set_level(CLK_CAT, 1);
+void pulse_col() {
+  GPIO.out_w1tc = 1UL << (CLK_CAT);   // clear CLK_CAT
+  GPIO.out_w1ts = 1UL << (CLK_CAT);   // set CLK_CAT
 }
 
-void displayImage(int arr[8]) {
+void display_image(int arr[8]) {
   // Put 0 into first row, 1 for the next 7
   for (int row = 0; row < 8; row++) {
     // Shift in the column
     for (int col = 0; col < 8; col++) {
       gpio_set_level(SER_CAT, arr[row] & (1 << col) ? 1 : 0);
-      pulseCol();
+      pulse_col();
     }
-    pulseCol();
+    pulse_col();
 
     gpio_set_level(SER_AN, row == 7 ? 0 : 1);
-    pulseRow();
+    pulse_row();
 
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
   }
 }
 
@@ -75,6 +76,6 @@ void app_main(void) {
 
   // Draw images forever!
   while (true) {
-    displayImage(image);
+    display_image(image);
   }
 }
