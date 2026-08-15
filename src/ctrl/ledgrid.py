@@ -5,7 +5,7 @@ import random
 import socket
 
 
-DEFAULT_HOST = "192.168.86.26"
+DEFAULT_HOST = "192.168.86.223"
 DEFAULT_PORT = 80
 DEFAULT_PATH = "/frame"
 
