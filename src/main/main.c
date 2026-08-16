@@ -2,24 +2,24 @@
   esp-idf yay!
 */
 
-#include <stdio.h>
 #include <inttypes.h>
-#include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <stdio.h>
+#include <string.h>
+
+#include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
-#include "esp_system.h"
 #include "esp_rom_sys.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs_flash.h"
 #include "protocol_examples_common.h"
-
-#include "driver/gpio.h"
+#include "sdkconfig.h"
 #include "soc/gpio_struct.h"
 
 #define DISPLAY_CORE 1
@@ -28,12 +28,13 @@
 static const char *TAG = "led_matrix";
 
 // serial and clock pins for cathodes (columns)
-static const int SER_CAT = 25;
-static const int CLK_CAT = 26;
+static const int SER_CAT = 33;
+static const int SRCLK_CAT = 32; // shift in new input
+static const int RCLK_CAT = 26;  // latch to output
 
 // serial and clock pins for anodes (rows)
 static const int SER_AN = 27;
-static const int CLK_AN = 14;
+static const int CLK_AN = 25;
 
 static uint8_t active_frame[8] = {
   0b00000000,
@@ -50,21 +51,25 @@ static bool pending_frame_ready = false;
 static portMUX_TYPE frame_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static inline void digital_write(int pin, int value) {
-  if (value) {
-    GPIO.out_w1ts = 1UL << pin;
+  if (pin < 32) {
+    if (value) {
+      GPIO.out_w1ts = 1UL << pin;
+    } else {
+      GPIO.out_w1tc = 1UL << pin;
+    }
   } else {
-    GPIO.out_w1tc = 1UL << pin;
+    const uint32_t mask = 1UL << (pin - 32);
+    if (value) {
+      GPIO.out1_w1ts.val = mask;
+    } else {
+      GPIO.out1_w1tc.val = mask;
+    }
   }
 }
 
-void pulse_row() {
-  digital_write(CLK_AN, 0);
-  digital_write(CLK_AN, 1);
-}
-
-void pulse_col() {
-  digital_write(CLK_CAT, 0);
-  digital_write(CLK_CAT, 1);
+void pulse_pin(int pin) {
+  digital_write(pin, 0);
+  digital_write(pin, 1);
 }
 
 void display_image(uint8_t arr[8]) {
@@ -73,13 +78,14 @@ void display_image(uint8_t arr[8]) {
     // Shift in the column
     for (int col = 0; col < 8; col++) {
       digital_write(SER_CAT, (arr[row] & (1 << col)));
-      pulse_col();
+      pulse_pin(SRCLK_CAT);
     }
-    pulse_col();
+    // pulse_pin(SRCLK_CAT); // TODO: unclear if this is requireed
+    pulse_pin(RCLK_CAT);
 
     // Loop over active row
     digital_write(SER_AN, (row == 7) ? 0 : 1);
-    pulse_row();
+    pulse_pin(CLK_AN);
 
     esp_rom_delay_us(ROW_HOLD_US);
   }
@@ -101,7 +107,8 @@ void display_task() {
   // Remove watchdog
   esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(DISPLAY_CORE));
 
-  while (true) display_image(active_frame);
+  while (true)
+    display_image(active_frame);
 }
 
 static esp_err_t frame_ws_handler(httpd_req_t *req) {
@@ -114,17 +121,20 @@ static esp_err_t frame_ws_handler(httpd_req_t *req) {
   uint8_t frame[8];
   httpd_ws_frame_t pkt = {0};
   esp_err_t ret = httpd_ws_recv_frame(req, &pkt, 0);
-  if (ret != ESP_OK) return ret;
+  if (ret != ESP_OK)
+    return ret;
 
   if (pkt.type != HTTPD_WS_TYPE_BINARY || pkt.len != sizeof(frame)) {
-    ESP_LOGW(TAG, "Rejected WebSocket frame: type=%d len=%d", pkt.type, pkt.len);
+    ESP_LOGW(
+      TAG, "Rejected WebSocket frame: type=%d len=%d", pkt.type, pkt.len);
     return ESP_FAIL;
   }
 
   // Write the 8 bytes to `frame`
   pkt.payload = frame;
   ret = httpd_ws_recv_frame(req, &pkt, sizeof(frame));
-  if (ret != ESP_OK) return ret;
+  if (ret != ESP_OK)
+    return ret;
 
   // Swap frames with lock
   taskENTER_CRITICAL(&frame_lock);
@@ -151,7 +161,9 @@ static httpd_handle_t start_webserver(void) {
   ESP_ERROR_CHECK(httpd_start(&server, &config));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &frame_ws));
   ESP_ERROR_CHECK(esp_netif_get_ip_info(get_example_netif(), &ip_info));
-  ESP_LOGI(TAG, "WebSocket endpoint ready at ws://" IPSTR "/frame", IP2STR(&ip_info.ip));
+  ESP_LOGI(TAG,
+           "WebSocket endpoint ready at ws://" IPSTR "/frame",
+           IP2STR(&ip_info.ip));
 
   return server;
 }
@@ -166,18 +178,18 @@ void app_main(void) {
 
   // Reset the pins
   configure_pin(SER_CAT);
-  configure_pin(CLK_CAT);
+  configure_pin(SRCLK_CAT);
+  configure_pin(RCLK_CAT);
   configure_pin(SER_AN);
   configure_pin(CLK_AN);
 
   // Display task on dedicated core 1
-  xTaskCreatePinnedToCore(
-      display_task,
-      "display",
-      4096,                     // bytes allocated to task size
-      NULL,
-      configMAX_PRIORITIES - 1, // priority
-      NULL,
-      DISPLAY_CORE              // core ID
+  xTaskCreatePinnedToCore(display_task,
+                          "display",
+                          4096, // bytes allocated to task size
+                          NULL,
+                          configMAX_PRIORITIES - 1, // priority
+                          NULL,
+                          DISPLAY_CORE // core ID
   );
 }

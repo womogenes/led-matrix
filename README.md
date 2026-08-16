@@ -12,7 +12,18 @@ To show that I can make a half-polished LED matrix from scratch using:
 - A 3rd printer
 - 74HC595 shift registers (x2)
 - 200-ohm resistors (x8)
-- An ESP32 with 5 pinouts
+- An ESP32 using five GPIO pins
+
+## Wiring
+
+One 74HC595 drives the row anodes. Its SRCLK and RCLK inputs are tied together.
+The other drives the column cathodes and has separate SRCLK and RCLK inputs.
+
+- GPIO32 / yellow → cathode SRCLK
+- GPIO26 / blue → cathode RCLK
+- GPIO25 / white → anode SRCLK and RCLK tied together
+- GPIO33 / green → cathode SER
+- GPIO27 / green → anode SER
 
 ## What can it do
 
@@ -27,7 +38,9 @@ To show that I can make a half-polished LED matrix from scratch using:
 ## Notes
 
 ```sh
-idf.py -b 921600 app-flash monitor
+cd src
+make flash main/main.c
 ```
 
-to flash just the app at 921k baud.
+to build and flash the main program. Pass another C file, such as
+`main/debug.c`, to build and flash that program instead.

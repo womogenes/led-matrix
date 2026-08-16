@@ -1,1 +1,3 @@
 build/
+src/ctrl/media/
+__pycache__/
